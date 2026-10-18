@@ -47,61 +47,93 @@ const actionText = document.getElementById('action-text');
 const reasonsList = document.getElementById('reasons-list');
 const benchmarkTbody = document.getElementById('benchmark-tbody');
 
-// Initialize on DOM load
-document.addEventListener('DOMContentLoaded', async () => {
-  setupEventListeners();
-  initGaugeChart(0, '#94a3b8');
-  await checkBackendStatus();
-  await loadModelInfo();
-  await loadCustomerPresets();
-});
+// Resilient Application Initializer
+async function initApp() {
+  console.log('[ChurnShield AI] Initializing app...');
+  try {
+    setupEventListeners();
+  } catch (err) {
+    console.error('Failed to setup event listeners:', err);
+  }
+
+  // 1. Check API Health immediately
+  checkBackendStatus().catch(console.error);
+
+  // 2. Load model info & presets
+  loadModelInfo().catch(console.error);
+  loadCustomerPresets().catch(console.error);
+
+  // 3. Initialize gauge
+  try {
+    initGaugeChart(0, '#94a3b8');
+  } catch (err) {
+    console.warn('Gauge chart initialization deferred:', err);
+  }
+}
+
+// Ensure execution whether DOM is loading or already interactive/complete
+if (document.readyState === 'loading') {
+  document.addEventListener('DOMContentLoaded', initApp);
+} else {
+  initApp();
+}
 
 // Setup Form & Input Listeners
 function setupEventListeners() {
   // Tenure slider sync
-  tenureSlider.addEventListener('input', (e) => {
-    const val = parseInt(e.target.value, 10);
-    const yrs = (val / 12).toFixed(1);
-    tenureDisplay.textContent = `${val} months (${yrs} yrs)`;
-    updateEstimatedTotal();
-  });
+  if (tenureSlider && tenureDisplay) {
+    tenureSlider.addEventListener('input', (e) => {
+      const val = parseInt(e.target.value, 10);
+      const yrs = (val / 12).toFixed(1);
+      tenureDisplay.textContent = `${val} months (${yrs} yrs)`;
+      updateEstimatedTotal();
+    });
+  }
 
   // Monthly charges slider sync
-  monthlySlider.addEventListener('input', (e) => {
-    const val = parseFloat(e.target.value);
-    monthlyDisplay.textContent = `$${val.toFixed(2)}`;
-    updateEstimatedTotal();
-  });
+  if (monthlySlider && monthlyDisplay) {
+    monthlySlider.addEventListener('input', (e) => {
+      const val = parseFloat(e.target.value);
+      monthlyDisplay.textContent = `$${val.toFixed(2)}`;
+      updateEstimatedTotal();
+    });
+  }
 
   // Total charges manual edit
-  totalInput.addEventListener('input', () => {
-    totalBadge.textContent = 'Manual';
-    totalBadge.style.background = '#e2e8f0';
-  });
+  if (totalInput && totalBadge) {
+    totalInput.addEventListener('input', () => {
+      totalBadge.textContent = 'Manual';
+      totalBadge.style.background = '#e2e8f0';
+    });
+  }
 
   // Preset selector
-  exampleSelector.addEventListener('change', (e) => {
-    const key = e.target.value;
-    if (customerPresets[key]) {
-      populateCustomerForm(customerPresets[key].data);
-      form.requestSubmit();
-    }
-  });
+  if (exampleSelector) {
+    exampleSelector.addEventListener('change', (e) => {
+      const key = e.target.value;
+      if (customerPresets[key]) {
+        populateCustomerForm(customerPresets[key].data);
+        handlePredictionSubmit(e);
+      }
+    });
+  }
 
   // Reset form
-  resetBtn.addEventListener('click', () => {
-    form.reset();
-    tenureSlider.value = 24;
-    tenureDisplay.textContent = '24 months (2.0 yrs)';
-    monthlySlider.value = 70.0;
-    monthlyDisplay.textContent = '$70.00';
-    totalInput.value = (24 * 70).toFixed(2);
-    totalBadge.textContent = 'Auto';
-    exampleSelector.value = '';
-    resetPredictionResults();
-  });
+  if (resetBtn) {
+    resetBtn.addEventListener('click', () => {
+      if (form) form.reset();
+      if (tenureSlider) tenureSlider.value = 24;
+      if (tenureDisplay) tenureDisplay.textContent = '24 months (2.0 yrs)';
+      if (monthlySlider) monthlySlider.value = 70.0;
+      if (monthlyDisplay) monthlyDisplay.textContent = '$70.00';
+      if (totalInput) totalInput.value = (24 * 70).toFixed(2);
+      if (totalBadge) totalBadge.textContent = 'Auto';
+      if (exampleSelector) exampleSelector.value = '';
+      resetPredictionResults();
+    });
+  }
 
-  // Internet service dependency helper (disable tech add-ons if No Internet)
+  // Internet service dependency helper
   document.querySelectorAll('input[name="InternetService"]').forEach(radio => {
     radio.addEventListener('change', (e) => {
       const isNone = e.target.value === 'No';
@@ -119,8 +151,16 @@ function setupEventListeners() {
     });
   });
 
-  // Form submission
-  form.addEventListener('submit', handlePredictionSubmit);
+  // Form submission & Button click prevention
+  if (form) {
+    form.addEventListener('submit', handlePredictionSubmit);
+  }
+  if (submitBtn) {
+    submitBtn.addEventListener('click', (e) => {
+      e.preventDefault();
+      handlePredictionSubmit(e);
+    });
+  }
 }
 
 // Auto calculate estimated TotalCharges
@@ -156,43 +196,58 @@ async function fetchApi(endpoint, options = {}) {
 
 // Check Backend Health
 async function checkBackendStatus() {
+  const dot = document.getElementById('status-dot') || statusDot;
+  const label = document.getElementById('status-label') || statusLabel;
+  const banner = document.getElementById('status-banner') || statusBanner;
+
   try {
     const res = await fetchApi('/health', { method: 'GET', headers: { 'Accept': 'application/json' } });
-    if (res.ok) {
+    if (res && res.ok) {
+      const data = await res.json();
       isBackendOnline = true;
-      statusDot.className = 'status-indicator live';
-      statusLabel.textContent = 'API Live (XGBoost + SHAP)';
-      statusBanner.classList.add('hidden');
+      if (dot) dot.className = 'status-indicator live';
+      if (label) label.textContent = 'API Live (XGBoost + SHAP)';
+      if (banner) banner.classList.add('hidden');
+      console.log('[ChurnShield AI] Connected to live FastAPI backend:', data);
       return;
     }
   } catch (err) {
-    // API not responding
+    console.warn('[ChurnShield AI] Backend check failed, activating client fallback:', err);
   }
 
   isBackendOnline = false;
-  statusDot.className = 'status-indicator offline';
-  statusLabel.textContent = 'Offline Engine (Logistic Fallback)';
+  if (dot) dot.className = 'status-indicator offline';
+  if (label) label.textContent = 'Offline Engine (Logistic Fallback)';
   showBanner('Backend API offline — using client-side Logistic Regression engine with exported model weights.', 'warning');
 }
 
 function showBanner(msg, type = 'warning') {
-  statusBanner.textContent = msg;
-  statusBanner.className = `status-banner ${type}`;
-  statusBanner.classList.remove('hidden');
+  const banner = document.getElementById('status-banner') || statusBanner;
+  if (banner) {
+    banner.textContent = msg;
+    banner.className = `status-banner ${type}`;
+    banner.classList.remove('hidden');
+  }
 }
 
 // Load Model Info for Charts & Tables
 async function loadModelInfo() {
   try {
     let data = null;
-    if (isBackendOnline) {
+    try {
       const res = await fetchApi('/model-info');
-      if (res.ok) data = await res.json();
+      if (res && res.ok) data = await res.json();
+    } catch (apiErr) {
+      console.warn('API /model-info deferred to static JSON:', apiErr);
     }
+
     if (!data) {
-      // Fetch local static JSON
-      const res = await fetch('data/model_info.json');
-      if (res.ok) data = await res.json();
+      try {
+        const res = await fetch('data/model_info.json');
+        if (res.ok) data = await res.json();
+      } catch (fileErr) {
+        console.warn('Static data/model_info.json failed:', fileErr);
+      }
     }
 
     if (data) {
@@ -200,6 +255,7 @@ async function loadModelInfo() {
       renderBenchmarkTable(data.model_comparison);
       renderFeatureImportanceChart(data.top_features);
       renderRocCurveChart(data.roc_curve);
+      console.log('[ChurnShield AI] Model info and benchmark data loaded.');
     }
   } catch (e) {
     console.error('Failed to load model info:', e);
@@ -210,19 +266,27 @@ async function loadModelInfo() {
 async function loadCustomerPresets() {
   try {
     let data = null;
-    if (isBackendOnline) {
+    try {
       const res = await fetchApi('/customer-examples');
-      if (res.ok) data = await res.json();
+      if (res && res.ok) data = await res.json();
+    } catch (apiErr) {
+      console.warn('API /customer-examples deferred to static JSON:', apiErr);
     }
+
     if (!data) {
-      const res = await fetch('data/customer_examples.json');
-      if (res.ok) data = await res.json();
+      try {
+        const res = await fetch('data/customer_examples.json');
+        if (res.ok) data = await res.json();
+      } catch (fileErr) {
+        console.warn('Static data/customer_examples.json failed:', fileErr);
+      }
     }
 
     if (data && Array.isArray(data)) {
       data.forEach(item => {
         customerPresets[item.id] = item;
       });
+      console.log(`[ChurnShield AI] Loaded ${data.length} customer presets.`);
     }
   } catch (e) {
     console.error('Failed to load presets:', e);
@@ -516,7 +580,19 @@ function renderReasons(reasons) {
 
 // Initialize Semi-Circular Gauge (Chart.js)
 function initGaugeChart(initialProb, color) {
-  const ctx = document.getElementById('gaugeCanvas').getContext('2d');
+  const canvas = document.getElementById('gaugeCanvas');
+  if (!canvas) return;
+
+  if (typeof Chart === 'undefined') {
+    setTimeout(() => initGaugeChart(initialProb, color), 150);
+    return;
+  }
+
+  const ctx = canvas.getContext('2d');
+  if (gaugeChart) {
+    try { gaugeChart.destroy(); } catch (e) {}
+  }
+
   gaugeChart = new Chart(ctx, {
     type: 'doughnut',
     data: {
@@ -543,7 +619,12 @@ function initGaugeChart(initialProb, color) {
 
 // Update Gauge Chart
 function updateGauge(prob, color) {
-  if (!gaugeChart) return;
+  if (!gaugeChart) {
+    if (typeof Chart !== 'undefined') {
+      initGaugeChart(prob, color);
+    }
+    return;
+  }
   const pct = Math.min(100, Math.max(0, prob * 100));
   gaugeChart.data.datasets[0].data = [pct, 100 - pct];
   gaugeChart.data.datasets[0].backgroundColor = [color, '#e2e8f0'];
@@ -622,10 +703,17 @@ function renderFeatureImportanceChart(features) {
   const canvas = document.getElementById('importanceChart');
   if (!canvas || !features) return;
 
+  if (typeof Chart === 'undefined') {
+    setTimeout(() => renderFeatureImportanceChart(features), 250);
+    return;
+  }
+
   const labels = features.map(f => f.feature.replace('_', ': ')).reverse();
   const values = features.map(f => f.importance).reverse();
 
-  if (importanceChart) importanceChart.destroy();
+  if (importanceChart) {
+    try { importanceChart.destroy(); } catch (e) {}
+  }
 
   const ctx = canvas.getContext('2d');
   importanceChart = new Chart(ctx, {
@@ -670,7 +758,14 @@ function renderRocCurveChart(roc) {
   const canvas = document.getElementById('rocChart');
   if (!canvas || !roc) return;
 
-  if (rocChart) rocChart.destroy();
+  if (typeof Chart === 'undefined') {
+    setTimeout(() => renderRocCurveChart(roc), 250);
+    return;
+  }
+
+  if (rocChart) {
+    try { rocChart.destroy(); } catch (e) {}
+  }
 
   const points = roc.fpr.map((fpr, i) => ({ x: fpr, y: roc.tpr[i] }));
   const randomLine = [{ x: 0, y: 0 }, { x: 1, y: 1 }];

@@ -8,8 +8,13 @@
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="style.css">
-  <!-- Chart.js for visualizations -->
+  <!-- Chart.js for visualizations with CDN fallback -->
   <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.2/dist/chart.umd.min.js"></script>
+  <script>
+    if (typeof Chart === 'undefined') {
+      document.write('<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"><\/script>');
+    }
+  </script>
 </head>
 <body>
   <!-- App Header -->
@@ -65,7 +70,7 @@
           <button type="button" id="reset-btn" class="btn-text">Reset</button>
         </div>
 
-        <form id="churn-form" novalidate>
+        <form id="churn-form" onsubmit="event.preventDefault();" novalidate>
           
           <!-- Section 1: Tenure & Contract -->
           <div class="form-section">
@@ -303,7 +308,7 @@
 
           <!-- Submit Button -->
           <div class="form-actions">
-            <button type="submit" id="submit-btn" class="btn btn-primary">
+            <button type="button" id="submit-btn" class="btn btn-primary">
               <span class="btn-spinner hidden" id="btn-spinner"></span>
               <span id="btn-text">Predict Churn Risk</span>
             </button>

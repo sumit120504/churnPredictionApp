@@ -398,6 +398,11 @@ model_joblib_path = os.path.join(BACKEND_DIR, 'model.joblib')
 joblib.dump(best_pipeline, model_joblib_path)
 print(f"Saved best pipeline to: {model_joblib_path}")
 
+# A2. xgb_model.json (lightweight zero-dependency serverless booster for Vercel)
+xgb_json_path = os.path.join(BACKEND_DIR, 'xgb_model.json')
+best_clf.get_booster().save_model(xgb_json_path)
+print(f"Saved lightweight booster to: {xgb_json_path}")
+
 # B. model_artifacts.joblib (metadata, explainer cache, threshold)
 artifacts = {
     'model_name': best_model_name,

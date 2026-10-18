@@ -1,25 +1,20 @@
 """
-FastAPI Backend for Telco Customer Churn Prediction
-Provides:
-- POST /predict: Predict churn probability, risk level, and top SHAP reasons
-- GET /model-info: Model metrics, feature importances, ROC curve, and comparisons
-- GET /customer-examples: Pre-configured sample customer profiles for quick UI demos
-- Static frontend mounting for full self-hosted single-command execution
-- CORS enabled for cross-origin frontend requests
+FastAPI Backend for Telco Customer Churn Prediction & Explainability
+Optimized for Vercel Serverless Function & Local Execution.
+Zero heavy dependencies (no scipy, nvidia, numba, or pandas required at runtime).
+Evaluates the 140-tree Tuned XGBoost model and calculates tree-path feature attribution in pure Python.
 """
 
 import os
+import sys
 import json
+import math
 from typing import Optional, List, Dict, Any
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field
-import joblib
-import pandas as pd
-import numpy as np
-import shap
 
 # Multi-environment path resolution (works locally, in Docker, and on Vercel Serverless)
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -41,8 +36,7 @@ def resolve_path(*relative_candidates) -> str:
                 return candidate
     return os.path.normpath(os.path.join(BASE_DIR, relative_candidates[0]))
 
-MODEL_PATH = resolve_path('backend/model.joblib', 'model.joblib')
-ARTIFACTS_PATH = resolve_path('backend/model_artifacts.joblib', 'model_artifacts.joblib')
+XGB_MODEL_PATH = resolve_path('backend/xgb_model.json', 'xgb_model.json')
 MODEL_INFO_PATH = resolve_path('data/model_info.json', 'model_info.json')
 EXAMPLES_PATH = resolve_path('data/customer_examples.json', 'customer_examples.json')
 DATA_DIR = resolve_path('data')
@@ -50,7 +44,7 @@ FRONTEND_DIR = resolve_path('frontend')
 
 app = FastAPI(
     title="Customer Churn Prediction API",
-    description="Machine learning API for predicting telecommunications customer churn with SHAP explanations.",
+    description="Machine learning API for predicting telecommunications customer churn with XGBoost & Explainability.",
     version="1.0.0"
 )
 
@@ -63,96 +57,96 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Global model state
-pipeline = None
-explainer = None
-artifacts = None
+# 46 Feature names exactly matching trained preprocessor
+CLEAN_FEATURE_NAMES = [
+    'tenure', 'MonthlyCharges', 'TotalCharges',
+    'gender_Female', 'gender_Male',
+    'SeniorCitizen_0', 'SeniorCitizen_1',
+    'Partner_No', 'Partner_Yes',
+    'Dependents_No', 'Dependents_Yes',
+    'PhoneService_No', 'PhoneService_Yes',
+    'MultipleLines_No', 'MultipleLines_No phone service', 'MultipleLines_Yes',
+    'InternetService_DSL', 'InternetService_Fiber optic', 'InternetService_No',
+    'OnlineSecurity_No', 'OnlineSecurity_No internet service', 'OnlineSecurity_Yes',
+    'OnlineBackup_No', 'OnlineBackup_No internet service', 'OnlineBackup_Yes',
+    'DeviceProtection_No', 'DeviceProtection_No internet service', 'DeviceProtection_Yes',
+    'TechSupport_No', 'TechSupport_No internet service', 'TechSupport_Yes',
+    'StreamingTV_No', 'StreamingTV_No internet service', 'StreamingTV_Yes',
+    'StreamingMovies_No', 'StreamingMovies_No internet service', 'StreamingMovies_Yes',
+    'Contract_Month-to-month', 'Contract_One year', 'Contract_Two year',
+    'PaperlessBilling_No', 'PaperlessBilling_Yes',
+    'PaymentMethod_Bank transfer (automatic)', 'PaymentMethod_Credit card (automatic)',
+    'PaymentMethod_Electronic check', 'PaymentMethod_Mailed check'
+]
+FEATURE_TO_IDX = {name: i for i, name in enumerate(CLEAN_FEATURE_NAMES)}
+
+# Model state
+xgb_trees = []
+xgb_base_margin = -1.018399  # default logit for 26.54% churn rate
 model_info = {}
 customer_examples = []
-clean_feature_names = []
+scaler_params = {
+    'tenure': {'mean': 32.37, 'scale': 24.56},
+    'MonthlyCharges': {'mean': 64.76, 'scale': 30.09},
+    'TotalCharges': {'mean': 2283.30, 'scale': 2266.77}
+}
+optimal_threshold = 0.15
 
 
 def load_model_assets():
-    global pipeline, explainer, artifacts, model_info, customer_examples, clean_feature_names
+    global xgb_trees, xgb_base_margin, model_info, customer_examples, scaler_params, optimal_threshold
     try:
-        if os.path.exists(MODEL_PATH):
-            pipeline = joblib.load(MODEL_PATH)
-            # Create SHAP TreeExplainer for the XGBoost classifier in the pipeline
-            xgb_clf = pipeline.named_steps['clf']
-            explainer = shap.TreeExplainer(xgb_clf)
-            print("Loaded model pipeline and initialized SHAP TreeExplainer.")
-            
-        if os.path.exists(ARTIFACTS_PATH):
-            artifacts = joblib.load(ARTIFACTS_PATH)
-            clean_feature_names = artifacts.get('clean_feature_names', [])
-            print(f"Loaded artifacts with {len(clean_feature_names)} feature names.")
+        if os.path.exists(XGB_MODEL_PATH):
+            with open(XGB_MODEL_PATH, 'r') as f:
+                xgb_data = json.load(f)
+            xgb_trees = xgb_data['learner']['gradient_booster']['model']['trees']
+            base_score_str = xgb_data['learner']['learner_model_param'].get('base_score', '[0.2653532]')
+            base_score = float(base_score_str.strip('[]'))
+            xgb_base_margin = math.log(base_score / (1.0 - base_score))
+            print(f"Loaded {len(xgb_trees)} XGBoost trees with base margin {xgb_base_margin:.4f}.")
 
         if os.path.exists(MODEL_INFO_PATH):
             with open(MODEL_INFO_PATH, 'r') as f:
                 model_info = json.load(f)
-            print("Loaded model_info.json.")
+            if 'best_model' in model_info:
+                optimal_threshold = float(model_info['best_model'].get('optimal_threshold', 0.15))
+            if 'client_scoring_fallback' in model_info and 'scaler' in model_info['client_scoring_fallback']:
+                scaler_params = model_info['client_scoring_fallback']['scaler']
+            print("Loaded model_info.json and scaler parameters.")
 
         if os.path.exists(EXAMPLES_PATH):
             with open(EXAMPLES_PATH, 'r') as f:
                 customer_examples = json.load(f)
-            print("Loaded customer_examples.json.")
+            print(f"Loaded {len(customer_examples)} customer examples.")
     except Exception as e:
-        print(f"Error loading model assets: {e}")
+        print(f"Warning loading assets: {e}")
 
 
-# Load on startup
+# Initialize model on module load
 load_model_assets()
 
 
 # Pydantic Schemas
 class CustomerInput(BaseModel):
-    gender: str = Field(default="Female", description="Gender: Female, Male")
-    SeniorCitizen: int = Field(default=0, ge=0, le=1, description="Senior Citizen: 0 or 1")
-    Partner: str = Field(default="No", description="Partner: Yes, No")
-    Dependents: str = Field(default="No", description="Dependents: Yes, No")
-    tenure: int = Field(default=12, ge=0, le=100, description="Months as customer")
-    PhoneService: str = Field(default="Yes", description="Phone Service: Yes, No")
-    MultipleLines: str = Field(default="No", description="Multiple Lines: Yes, No, No phone service")
-    InternetService: str = Field(default="Fiber optic", description="Internet: DSL, Fiber optic, No")
-    OnlineSecurity: str = Field(default="No", description="Online Security: Yes, No, No internet service")
-    OnlineBackup: str = Field(default="No", description="Online Backup: Yes, No, No internet service")
-    DeviceProtection: str = Field(default="No", description="Device Protection: Yes, No, No internet service")
-    TechSupport: str = Field(default="No", description="Tech Support: Yes, No, No internet service")
-    StreamingTV: str = Field(default="Yes", description="Streaming TV: Yes, No, No internet service")
-    StreamingMovies: str = Field(default="Yes", description="Streaming Movies: Yes, No, No internet service")
-    Contract: str = Field(default="Month-to-month", description="Contract: Month-to-month, One year, Two year")
-    PaperlessBilling: str = Field(default="Yes", description="Paperless Billing: Yes, No")
-    PaymentMethod: str = Field(
-        default="Electronic check",
-        description="Payment: Electronic check, Mailed check, Bank transfer (automatic), Credit card (automatic)"
-    )
-    MonthlyCharges: float = Field(default=85.0, ge=0, description="Monthly bill in USD")
-    TotalCharges: Optional[float] = Field(default=None, ge=0, description="Total cumulative bill in USD")
-
-    class Config:
-        json_schema_extra = {
-            "example": {
-                "gender": "Female",
-                "SeniorCitizen": 0,
-                "Partner": "No",
-                "Dependents": "No",
-                "tenure": 3,
-                "PhoneService": "Yes",
-                "MultipleLines": "No",
-                "InternetService": "Fiber optic",
-                "OnlineSecurity": "No",
-                "OnlineBackup": "No",
-                "DeviceProtection": "No",
-                "TechSupport": "No",
-                "StreamingTV": "Yes",
-                "StreamingMovies": "Yes",
-                "Contract": "Month-to-month",
-                "PaperlessBilling": "Yes",
-                "PaymentMethod": "Electronic check",
-                "MonthlyCharges": 89.5,
-                "TotalCharges": 268.5
-            }
-        }
+    gender: str = Field(default="Female")
+    SeniorCitizen: int = Field(default=0, ge=0, le=1)
+    Partner: str = Field(default="No")
+    Dependents: str = Field(default="No")
+    tenure: int = Field(default=12, ge=0, le=100)
+    PhoneService: str = Field(default="Yes")
+    MultipleLines: str = Field(default="No")
+    InternetService: str = Field(default="Fiber optic")
+    OnlineSecurity: str = Field(default="No")
+    OnlineBackup: str = Field(default="No")
+    DeviceProtection: str = Field(default="No")
+    TechSupport: str = Field(default="No")
+    StreamingTV: str = Field(default="Yes")
+    StreamingMovies: str = Field(default="Yes")
+    Contract: str = Field(default="Month-to-month")
+    PaperlessBilling: str = Field(default="Yes")
+    PaymentMethod: str = Field(default="Electronic check")
+    MonthlyCharges: float = Field(default=85.0, ge=0)
+    TotalCharges: Optional[float] = Field(default=None, ge=0)
 
 
 class ChurnReason(BaseModel):
@@ -170,8 +164,65 @@ class PredictResponse(BaseModel):
     top_reasons: List[ChurnReason]
 
 
+def preprocess_customer_to_vector(cust: Dict[str, Any]) -> List[float]:
+    """Encodes raw customer JSON into the 46 features expected by XGBoost."""
+    tenure = float(cust.get('tenure', 0))
+    monthly = float(cust.get('MonthlyCharges', 0.0))
+    raw_total = cust.get('TotalCharges')
+    total = float(raw_total) if raw_total is not None and raw_total > 0 else (tenure * monthly)
+
+    vec = [0.0] * 46
+    # Scaled numeric features
+    vec[0] = (tenure - scaler_params['tenure']['mean']) / scaler_params['tenure']['scale']
+    vec[1] = (monthly - scaler_params['MonthlyCharges']['mean']) / scaler_params['MonthlyCharges']['scale']
+    vec[2] = (total - scaler_params['TotalCharges']['mean']) / scaler_params['TotalCharges']['scale']
+
+    # One-hot categorical features
+    for col, val in cust.items():
+        if col not in ['tenure', 'MonthlyCharges', 'TotalCharges']:
+            k = f"{col}_{val}"
+            if k in FEATURE_TO_IDX:
+                vec[FEATURE_TO_IDX[k]] = 1.0
+
+    return vec
+
+
+def evaluate_xgboost_pure(feature_vector: List[float]):
+    """Evaluates the 140 XGBoost decision trees and computes path attributions."""
+    raw_score = xgb_base_margin
+    attributions = [0.0] * 46
+
+    for tree in xgb_trees:
+        left = tree['left_children']
+        right = tree['right_children']
+        split_idx = tree['split_indices']
+        cond = tree['split_conditions']
+        node = 0
+        path = []
+        while left[node] != -1:
+            feat = split_idx[node]
+            val = feature_vector[feat]
+            path.append(feat)
+            if val < cond[node]:
+                node = left[node]
+            else:
+                node = right[node]
+        leaf_val = cond[node]
+        raw_score += leaf_val
+
+        # Distribute tree margin along the path for explainability
+        if path:
+            weight = leaf_val / len(path)
+            for f in path:
+                attributions[f] += weight
+
+    # Sigmoid function
+    prob = 1.0 / (1.0 + math.exp(-raw_score))
+    return prob, attributions
+
+
 def generate_human_explanation(clean_feat: str, val: float, cust_dict: Dict[str, Any]) -> str:
-    """Generate clear, context-aware business explanation for SHAP feature attribution."""
+    """Generate clear, context-aware business explanation for feature attribution."""
     direction_word = "increases" if val > 0 else "reduces"
     contract_val = cust_dict.get('Contract', '')
     internet_val = cust_dict.get('InternetService', '')
@@ -240,27 +291,27 @@ def generate_human_explanation(clean_feat: str, val: float, cust_dict: Dict[str,
         return f"{nice_feat} {direction_word} churn probability."
 
 
+# Endpoints
 @app.get("/health")
 @app.get("/api/health")
 def health_check():
     return {
         "status": "healthy",
-        "model_loaded": pipeline is not None,
-        "explainer_loaded": explainer is not None,
-        "features_count": len(clean_feature_names)
+        "trees_count": len(xgb_trees),
+        "model_loaded": len(xgb_trees) > 0,
+        "features_count": len(CLEAN_FEATURE_NAMES)
     }
 
 
 @app.get("/model-info")
 @app.get("/api/model-info")
 def get_model_info():
-    """Return model metrics, comparison table, ROC curve, and top features for frontend."""
+    """Return model metrics, comparison table, ROC curve, and top features."""
     if not model_info:
-        # Fallback reload
         if os.path.exists(MODEL_INFO_PATH):
             with open(MODEL_INFO_PATH, 'r') as f:
                 return json.load(f)
-        raise HTTPException(status_code=404, detail="Model info not yet generated.")
+        raise HTTPException(status_code=404, detail="Model info not found.")
     return model_info
 
 
@@ -281,27 +332,22 @@ def get_customer_examples():
 def predict_churn(customer: CustomerInput):
     """
     Accepts customer profile JSON.
-    Returns churn probability, risk level, optimal threshold decision, and top SHAP drivers.
+    Returns churn probability, risk level, cost-optimized threshold decision, and top reasons.
     """
-    if pipeline is None or explainer is None:
-        raise HTTPException(status_code=503, detail="Model is still initializing or not found.")
+    if not xgb_trees:
+        load_model_assets()
+        if not xgb_trees:
+            raise HTTPException(status_code=503, detail="Model assets not loaded.")
 
-    # Convert Pydantic model to dict
     cust_dict = customer.dict()
-
-    # Handle TotalCharges if not provided or empty
     if cust_dict['TotalCharges'] is None or cust_dict['TotalCharges'] <= 0:
         cust_dict['TotalCharges'] = float(cust_dict['tenure'] * cust_dict['MonthlyCharges'])
 
-    df_input = pd.DataFrame([cust_dict])
-
     try:
-        # 1. Predict Probability
-        prob = float(pipeline.predict_proba(df_input)[0, 1])
+        vec = preprocess_customer_to_vector(cust_dict)
+        prob, attributions = evaluate_xgboost_pure(vec)
 
-        # 2. Risk Level & Decision
-        opt_th = artifacts.get('optimal_threshold', 0.25) if artifacts else 0.25
-        
+        # Risk classification
         if prob >= 0.60:
             risk_level = "High"
         elif prob >= 0.30:
@@ -309,28 +355,22 @@ def predict_churn(customer: CustomerInput):
         else:
             risk_level = "Low"
 
-        predicted_churn = bool(prob >= opt_th)
+        predicted_churn = bool(prob >= optimal_threshold)
 
-        # 3. Compute SHAP values
-        preprocessor = pipeline.named_steps['prep']
-        transformed_input = preprocessor.transform(df_input)
-        shap_vals = explainer(transformed_input).values[0]
-
-        # Extract top 4 reasons by absolute SHAP attribution
-        top_indices = np.argsort(np.abs(shap_vals))[::-1][:4]
+        # Extract top 4 driver features by absolute impact
+        top_indices = sorted(range(len(attributions)), key=lambda i: abs(attributions[i]), reverse=True)[:4]
         
         top_reasons = []
         for idx in top_indices:
-            feat_name = clean_feature_names[idx] if idx < len(clean_feature_names) else f"feature_{idx}"
-            val = float(shap_vals[idx])
-            direction = "increase" if val > 0 else "decrease"
-            
-            human_text = generate_human_explanation(feat_name, val, cust_dict)
-
+            feat_name = CLEAN_FEATURE_NAMES[idx]
+            impact_val = float(attributions[idx])
+            direction = "increase" if impact_val > 0 else "decrease"
+            human_text = generate_human_explanation(feat_name, impact_val, cust_dict)
             clean_label = feat_name.replace('_', ': ')
+
             top_reasons.append(ChurnReason(
                 feature=clean_label,
-                impact=round(val, 3),
+                impact=round(impact_val, 3),
                 direction=direction,
                 human_explanation=human_text
             ))
@@ -338,7 +378,7 @@ def predict_churn(customer: CustomerInput):
         return PredictResponse(
             probability=round(prob, 4),
             risk_level=risk_level,
-            optimal_threshold=round(float(opt_th), 2),
+            optimal_threshold=round(float(optimal_threshold), 2),
             predicted_churn=predicted_churn,
             top_reasons=top_reasons
         )

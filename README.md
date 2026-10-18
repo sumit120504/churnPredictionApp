@@ -189,8 +189,10 @@ If the frontend is served statically without an active backend server (or during
 
 3. **Install dependencies:**
    ```bash
-   pip install -r requirements.txt
+   # For running the web app locally and model development:
+   pip install -r requirements-dev.txt
    ```
+
 
 ### Retraining the Models
 To run the full end-to-end training, generate charts, compute SHAP values, and export model artifacts:

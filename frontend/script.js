@@ -363,6 +363,7 @@ async function handlePredictionSubmit(e) {
     let result = null;
 
     if (isBackendOnline) {
+      try {
         const response = await fetchApi('/predict', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
@@ -377,8 +378,8 @@ async function handlePredictionSubmit(e) {
       } catch (apiErr) {
         console.warn('API call failed, falling back to client scoring:', apiErr);
         isBackendOnline = false;
-        statusDot.className = 'status-indicator offline';
-        statusLabel.textContent = 'Offline Engine (Logistic Fallback)';
+        if (statusDot) statusDot.className = 'status-indicator offline';
+        if (statusLabel) statusLabel.textContent = 'Offline Engine (Logistic Fallback)';
         showBanner('Backend offline: Generated prediction via client-side Logistic Regression engine.', 'warning');
       }
     }

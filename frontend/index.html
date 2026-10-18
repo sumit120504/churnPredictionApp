@@ -1,0 +1,475 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Telco Churn Prediction & Explainability</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="style.css">
+  <!-- Chart.js for visualizations -->
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.2/dist/chart.umd.min.js"></script>
+</head>
+<body>
+  <!-- App Header -->
+  <header class="app-header">
+    <div class="header-container">
+      <div class="brand">
+        <div class="brand-icon">
+          <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"></path>
+            <circle cx="9" cy="7" r="4"></circle>
+            <path d="M22 21v-2a4 4 0 0 0-3-3.87"></path>
+            <path d="M16 3.13a4 4 0 0 1 0 7.75"></path>
+          </svg>
+        </div>
+        <div>
+          <h1 class="brand-title">ChurnShield AI</h1>
+          <p class="brand-subtitle">Telco Customer Retention & SHAP Explainability Engine</p>
+        </div>
+      </div>
+      <div class="header-actions">
+        <div class="system-status" id="system-status">
+          <span class="status-indicator live" id="status-dot"></span>
+          <span id="status-label">Checking API...</span>
+        </div>
+        <div class="demo-selector-wrapper">
+          <label for="example-selector" class="sr-only">Load Example</label>
+          <select id="example-selector" class="demo-select">
+            <option value="" disabled selected>⚡ Load Customer Preset...</option>
+            <option value="high_risk">⚠️ Jane Doe (High Churn Risk)</option>
+            <option value="low_risk">🛡️ Marcus Vance (Loyal Long-term)</option>
+            <option value="medium_risk">⚖️ Alex Chen (Moderate Risk)</option>
+            <option value="budget_saver">📞 Robert Miller (Phone Only)</option>
+          </select>
+        </div>
+      </div>
+    </div>
+  </header>
+
+  <!-- Notification Banner -->
+  <div id="status-banner" class="status-banner hidden"></div>
+
+  <!-- Main Content Layout -->
+  <main class="main-container">
+    <div class="app-grid">
+      
+      <!-- LEFT COLUMN: Customer Input Form -->
+      <section class="card form-card">
+        <div class="card-header">
+          <div>
+            <h2 class="card-title">Customer Profile</h2>
+            <p class="card-description">Adjust subscription parameters to predict churn risk</p>
+          </div>
+          <button type="button" id="reset-btn" class="btn-text">Reset</button>
+        </div>
+
+        <form id="churn-form" novalidate>
+          
+          <!-- Section 1: Tenure & Contract -->
+          <div class="form-section">
+            <h3 class="section-title">
+              <span class="step-num">1</span> Contract & Tenure
+            </h3>
+
+            <!-- Tenure Slider -->
+            <div class="form-group">
+              <div class="label-row">
+                <label for="tenure">Tenure (Months with Company)</label>
+                <span class="range-value" id="tenure-display">24 months (2.0 yrs)</span>
+              </div>
+              <input type="range" id="tenure" name="tenure" min="0" max="72" value="24" class="slider">
+              <div class="slider-marks">
+                <span>0m</span>
+                <span>12m (1y)</span>
+                <span>24m (2y)</span>
+                <span>48m (4y)</span>
+                <span>72m (6y)</span>
+              </div>
+            </div>
+
+            <!-- Contract Type -->
+            <div class="form-group">
+              <label>Contract Type</label>
+              <div class="radio-pill-group" role="radiogroup">
+                <label class="radio-pill">
+                  <input type="radio" name="Contract" value="Month-to-month" checked>
+                  <span class="pill-box">Month-to-Month</span>
+                </label>
+                <label class="radio-pill">
+                  <input type="radio" name="Contract" value="One year">
+                  <span class="pill-box">One Year</span>
+                </label>
+                <label class="radio-pill">
+                  <input type="radio" name="Contract" value="Two year">
+                  <span class="pill-box">Two Year</span>
+                </label>
+              </div>
+            </div>
+
+            <!-- Payment Method & Paperless Billing -->
+            <div class="form-row-2">
+              <div class="form-group">
+                <label for="PaymentMethod">Payment Method</label>
+                <select id="PaymentMethod" name="PaymentMethod" class="form-control">
+                  <option value="Electronic check">Electronic Check (High Risk)</option>
+                  <option value="Mailed check">Mailed Check</option>
+                  <option value="Bank transfer (automatic)">Bank Transfer (Auto)</option>
+                  <option value="Credit card (automatic)">Credit Card (Auto)</option>
+                </select>
+              </div>
+              <div class="form-group">
+                <label>Paperless Billing</label>
+                <div class="toggle-group">
+                  <label class="toggle-option">
+                    <input type="radio" name="PaperlessBilling" value="Yes" checked>
+                    <span>Yes</span>
+                  </label>
+                  <label class="toggle-option">
+                    <input type="radio" name="PaperlessBilling" value="No">
+                    <span>No</span>
+                  </label>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <!-- Section 2: Financials & Charges -->
+          <div class="form-section">
+            <h3 class="section-title">
+              <span class="step-num">2</span> Billing & Revenue
+            </h3>
+            
+            <div class="form-row-2">
+              <div class="form-group">
+                <div class="label-row">
+                  <label for="MonthlyCharges">Monthly Charges ($)</label>
+                  <span class="charge-display" id="monthly-charges-display">$70.00</span>
+                </div>
+                <input type="range" id="MonthlyCharges" name="MonthlyCharges" min="18.00" max="120.00" step="0.50" value="70.00" class="slider">
+              </div>
+
+              <div class="form-group">
+                <div class="label-row">
+                  <label for="TotalCharges">Estimated Total Charges ($)</label>
+                  <span class="total-badge" id="total-charges-badge">Auto</span>
+                </div>
+                <input type="number" id="TotalCharges" name="TotalCharges" min="0" step="1" value="1680.00" class="form-control">
+              </div>
+            </div>
+          </div>
+
+          <!-- Section 3: Connectivity & Core Services -->
+          <div class="form-section">
+            <h3 class="section-title">
+              <span class="step-num">3</span> Connectivity & Security Services
+            </h3>
+
+            <div class="form-group">
+              <label>Internet Service</label>
+              <div class="radio-pill-group">
+                <label class="radio-pill">
+                  <input type="radio" name="InternetService" value="Fiber optic" checked>
+                  <span class="pill-box">Fiber Optic</span>
+                </label>
+                <label class="radio-pill">
+                  <input type="radio" name="InternetService" value="DSL">
+                  <span class="pill-box">DSL</span>
+                </label>
+                <label class="radio-pill">
+                  <input type="radio" name="InternetService" value="No">
+                  <span class="pill-box">None (Phone Only)</span>
+                </label>
+              </div>
+            </div>
+
+            <!-- Service Checkboxes / Selects -->
+            <div class="services-grid" id="addons-container">
+              <div class="form-group">
+                <label for="OnlineSecurity">Online Security</label>
+                <select id="OnlineSecurity" name="OnlineSecurity" class="form-control">
+                  <option value="No">No</option>
+                  <option value="Yes">Yes</option>
+                  <option value="No internet service">No Internet</option>
+                </select>
+              </div>
+
+              <div class="form-group">
+                <label for="TechSupport">Tech Support</label>
+                <select id="TechSupport" name="TechSupport" class="form-control">
+                  <option value="No">No</option>
+                  <option value="Yes">Yes</option>
+                  <option value="No internet service">No Internet</option>
+                </select>
+              </div>
+
+              <div class="form-group">
+                <label for="OnlineBackup">Online Backup</label>
+                <select id="OnlineBackup" name="OnlineBackup" class="form-control">
+                  <option value="No">No</option>
+                  <option value="Yes">Yes</option>
+                  <option value="No internet service">No Internet</option>
+                </select>
+              </div>
+
+              <div class="form-group">
+                <label for="DeviceProtection">Device Protection</label>
+                <select id="DeviceProtection" name="DeviceProtection" class="form-control">
+                  <option value="No">No</option>
+                  <option value="Yes">Yes</option>
+                  <option value="No internet service">No Internet</option>
+                </select>
+              </div>
+
+              <div class="form-group">
+                <label for="StreamingTV">Streaming TV</label>
+                <select id="StreamingTV" name="StreamingTV" class="form-control">
+                  <option value="Yes">Yes</option>
+                  <option value="No">No</option>
+                  <option value="No internet service">No Internet</option>
+                </select>
+              </div>
+
+              <div class="form-group">
+                <label for="StreamingMovies">Streaming Movies</label>
+                <select id="StreamingMovies" name="StreamingMovies" class="form-control">
+                  <option value="Yes">Yes</option>
+                  <option value="No">No</option>
+                  <option value="No internet service">No Internet</option>
+                </select>
+              </div>
+            </div>
+
+            <div class="form-row-2">
+              <div class="form-group">
+                <label for="PhoneService">Phone Service</label>
+                <select id="PhoneService" name="PhoneService" class="form-control">
+                  <option value="Yes">Yes</option>
+                  <option value="No">No</option>
+                </select>
+              </div>
+              <div class="form-group">
+                <label for="MultipleLines">Multiple Lines</label>
+                <select id="MultipleLines" name="MultipleLines" class="form-control">
+                  <option value="No">No</option>
+                  <option value="Yes">Yes</option>
+                  <option value="No phone service">No Phone Service</option>
+                </select>
+              </div>
+            </div>
+          </div>
+
+          <!-- Section 4: Demographics -->
+          <div class="form-section">
+            <h3 class="section-title">
+              <span class="step-num">4</span> Customer Demographics
+            </h3>
+            
+            <div class="demo-grid">
+              <div class="form-group">
+                <label for="gender">Gender</label>
+                <select id="gender" name="gender" class="form-control">
+                  <option value="Female">Female</option>
+                  <option value="Male">Male</option>
+                </select>
+              </div>
+
+              <div class="form-group">
+                <label for="SeniorCitizen">Senior Citizen</label>
+                <select id="SeniorCitizen" name="SeniorCitizen" class="form-control">
+                  <option value="0">No (Age &lt; 65)</option>
+                  <option value="1">Yes (Age 65+)</option>
+                </select>
+              </div>
+
+              <div class="form-group">
+                <label for="Partner">Partner</label>
+                <select id="Partner" name="Partner" class="form-control">
+                  <option value="No">No</option>
+                  <option value="Yes">Yes</option>
+                </select>
+              </div>
+
+              <div class="form-group">
+                <label for="Dependents">Dependents</label>
+                <select id="Dependents" name="Dependents" class="form-control">
+                  <option value="No">No</option>
+                  <option value="Yes">Yes</option>
+                </select>
+              </div>
+            </div>
+          </div>
+
+          <!-- Submit Button -->
+          <div class="form-actions">
+            <button type="submit" id="submit-btn" class="btn btn-primary">
+              <span class="btn-spinner hidden" id="btn-spinner"></span>
+              <span id="btn-text">Predict Churn Risk</span>
+            </button>
+          </div>
+        </form>
+      </section>
+
+      <!-- RIGHT COLUMN: Predictions & SHAP Explanations -->
+      <section class="results-column">
+        
+        <!-- Prediction Gauge Card -->
+        <div class="card result-card" id="result-card">
+          <div class="card-header">
+            <div>
+              <h2 class="card-title">Prediction Result</h2>
+              <p class="card-description">Model assessment & risk probability</p>
+            </div>
+            <div id="risk-badge" class="risk-badge risk-neutral">Awaiting Analysis</div>
+          </div>
+
+          <div class="gauge-container">
+            <div class="gauge-wrapper">
+              <canvas id="gaugeCanvas" width="260" height="150"></canvas>
+              <div class="gauge-center-text">
+                <span class="gauge-percent" id="prob-percent">--%</span>
+                <span class="gauge-sublabel">Churn Probability</span>
+              </div>
+            </div>
+            
+            <div class="gauge-stats">
+              <div class="stat-item">
+                <span class="stat-label">Model Verdict</span>
+                <span class="stat-value" id="verdict-text">Ready to run</span>
+              </div>
+              <div class="stat-item">
+                <span class="stat-label">Decision Cutoff</span>
+                <span class="stat-value" id="threshold-text">15% (Cost Tuned)</span>
+              </div>
+              <div class="stat-item">
+                <span class="stat-label">Recommended Action</span>
+                <span class="stat-value" id="action-text">Configure profile and click predict</span>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- SHAP Explanation Card -->
+        <div class="card reasons-card">
+          <div class="card-header">
+            <div>
+              <h2 class="card-title">Key Drivers & Explanations</h2>
+              <p class="card-description">Top SHAP feature attributions explaining this specific customer</p>
+            </div>
+            <span class="badge-tag">SHAP Values</span>
+          </div>
+
+          <div id="reasons-list" class="reasons-list">
+            <div class="empty-state">
+              <svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+                <path d="M12 2v4M12 18v4M4.93 4.93l2.83 2.83M16.24 16.24l2.83 2.83M2 12h4M18 12h4M4.93 19.07l2.83-2.83M16.24 7.76l2.83-2.83"></path>
+              </svg>
+              <p>Submit customer parameters to generate personalized SHAP explanations.</p>
+            </div>
+          </div>
+        </div>
+
+        <!-- Quick Summary Box -->
+        <div class="card quick-info-card">
+          <div class="info-row">
+            <div class="info-icon">💡</div>
+            <div>
+              <h4 class="info-heading">Business Cost Optimization</h4>
+              <p class="info-text">
+                Our model operates at a tuned <strong>15% cutoff threshold</strong>. Because retaining an at-risk customer ($100 offer) saves $500 in lost revenue, this strategy reduces business losses by <strong>38.6%</strong> compared to the default 50% threshold.
+              </p>
+            </div>
+          </div>
+        </div>
+
+      </section>
+    </div>
+
+    <!-- BOTTOM SECTION: Model Insights & Transparency Dashboard -->
+    <section class="insights-section">
+      <div class="insights-header">
+        <div>
+          <h2 class="section-main-title">Model Insights & Benchmark Dashboard</h2>
+          <p class="section-main-subtitle">Validation metrics, global feature importances, and multi-model benchmark results</p>
+        </div>
+      </div>
+
+      <div class="insights-grid">
+        <!-- Feature Importance Chart -->
+        <div class="card chart-card">
+          <div class="card-header">
+            <div>
+              <h3 class="card-title">Global Feature Importance</h3>
+              <p class="card-description">Mean absolute SHAP value impact across all customers</p>
+            </div>
+          </div>
+          <div class="chart-wrapper">
+            <canvas id="importanceChart"></canvas>
+          </div>
+        </div>
+
+        <!-- ROC Curve Chart -->
+        <div class="card chart-card">
+          <div class="card-header">
+            <div>
+              <h3 class="card-title">ROC Curve (Test Validation)</h3>
+              <p class="card-description">True Positive Rate vs False Positive Rate (AUC = 0.848)</p>
+            </div>
+          </div>
+          <div class="chart-wrapper">
+            <canvas id="rocChart"></canvas>
+          </div>
+        </div>
+      </div>
+
+      <!-- Model Comparison Table -->
+      <div class="card table-card">
+        <div class="card-header">
+          <div>
+            <h3 class="card-title">Model Architecture Benchmark</h3>
+            <p class="card-description">Systematic comparison across algorithms and imbalance handling strategies</p>
+          </div>
+          <span class="badge-tag">Evaluated on Stratified Test Set (n=1,409)</span>
+        </div>
+
+        <div class="table-responsive">
+          <table class="benchmark-table">
+            <thead>
+              <tr>
+                <th>Model Architecture</th>
+                <th>Strategy</th>
+                <th>Accuracy</th>
+                <th>ROC-AUC</th>
+                <th>F1-Score</th>
+                <th>Precision</th>
+                <th>Recall</th>
+                <th>Status</th>
+              </tr>
+            </thead>
+            <tbody id="benchmark-tbody">
+              <tr>
+                <td colspan="8" class="text-center py-4">Loading benchmark metrics...</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <!-- Footer -->
+  <footer class="app-footer">
+    <div class="footer-container">
+      <p>Telco Customer Churn Prediction &copy; 2026. Built with FastAPI, XGBoost, Scikit-Learn, SHAP & Chart.js.</p>
+      <div class="footer-links">
+        <span>Dataset: IBM Telco Customer Churn</span>
+        <span>&bull;</span>
+        <span>Trained Pipeline: model.joblib</span>
+      </div>
+    </div>
+  </footer>
+
+  <script src="script.js"></script>
+</body>
+</html>
